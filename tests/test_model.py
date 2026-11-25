@@ -60,3 +60,47 @@ def test_recommendation_labels():
     assert recommendation(60, 40, 0.8)[0] == "BUY"
     assert recommendation(30, 40, 0.2)[0] == "SELL"
     assert recommendation(42, 40, 0.5)[0] == "HOLD"
+
+
+from valuation.model import blended_dcf, blended_dcf_vec, max_entry_multiple, solve_shift, tornado  # noqa: E402
+
+
+def test_vectorized_dcf_matches_exact():
+    from dataclasses import replace as r
+    a = Assumptions()
+    w = wacc(a)["wacc"]
+    v = blended_dcf_vec(a, [0.02], [-0.01], [w + 0.01], [0.02])[0]
+    b = r(a, growth=tuple(x + 0.02 for x in a.growth), ebitda_margin=tuple(x - 0.01 for x in a.ebitda_margin), terminal_growth=0.02)
+    assert abs(v - blended_dcf(b, discount=w + 0.01)) < 1e-9
+
+
+def test_reverse_dcf_hits_price():
+    a = Assumptions()
+    from dataclasses import replace as r
+    dg = solve_shift(a, a.price, "growth")
+    assert abs(blended_dcf(r(a, growth=tuple(x + dg for x in a.growth))) - a.price) < 1e-6
+    assert solve_shift(a, 1e6, "growth") is None
+
+
+def test_gordon_tv_uses_mid_year_discount():
+    a = Assumptions()
+    d = dcf(a)
+    assert abs(d["pv_tv"] - d["tv"] / (1 + d["wacc"]) ** 4.5) < 1e-9
+
+
+def test_lbo_keeps_surplus_cash_and_funds_shortfalls():
+    a = Assumptions()
+    no_debt = lbo(a, 10, 0, 0.08, 10)
+    assert no_debt["schedule"]["Cash built"].iloc[-1] > 0
+    from dataclasses import replace as r
+    burn = lbo(r(a, capex_pct=0.25), 10, 4, 0.08, 10)
+    assert burn["schedule"]["Ending debt"].iloc[-1] > burn["schedule"]["Ending debt"].iloc[0] - 1e-9
+
+
+def test_max_entry_multiple_nan_when_impossible():
+    import math
+    assert math.isnan(max_entry_multiple(Assumptions(), 6.5, 0.14, 3.0, 0.20))
+
+
+def test_tornado_has_all_drivers():
+    assert len(tornado(Assumptions())) == 6
