@@ -1,3 +1,11 @@
 [theme]
-primaryColor = "#1F2A44"
-font = "serif"
+base = "light"
+primaryColor = "#1F3A93"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F3F7"
+textColor = "#111111"
+font = "sans serif"
+baseFontSize = 17
+
+[client]
+toolbarMode = "minimal"
