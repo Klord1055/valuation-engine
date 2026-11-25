@@ -202,6 +202,9 @@ def max_entry_multiple(a: Assumptions, leverage: float, rate: float, exit_multip
 
 def recommendation(value: float, price: float, prob_up: float) -> tuple[str, str]:
     upside = value / price - 1
+    if not np.isfinite(prob_up):
+        move = f"{upside:.0%} upside" if upside >= 0 else f"{abs(upside):.0%} downside"
+        return "HOLD", f"{move} to blended value. Simulations were unavailable, so no BUY or SELL is given"
     if upside >= 0.15 and prob_up >= 0.6:
         return "BUY", f"{upside:.0%} upside to blended value, {prob_up:.0%} of simulations above today's price"
     if upside <= -0.15 and prob_up <= 0.4:
