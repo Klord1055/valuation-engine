@@ -184,7 +184,7 @@ with tabs[0]:
         "Item": ["Company", "Call", "Price", "Blended value", "Upside", "Chance value beats price", "WACC",
                  "DCF, long run growth", "DCF, exit multiple", "Comps EV/EBITDA", "Comps EV/Revenue",
                  "Growth the price assumes", "Sponsor IRR"],
-        "Value": [name, call, f"${price:,.2f}", f"${blended:,.2f}", f"{blended / price - 1:+.1%}", f"{prob_up:.0%}",
+        "Value": [name, call, f"${price:,.2f}", f"${blended:,.2f}", f"{blended / price - 1:+.1%}", f"{prob_up:.0%}" if np.isfinite(prob_up) else "n/a",
                   f"{w['wacc']:.2%}", f"${g_dcf['per_share']:,.2f}", f"${x_dcf['per_share']:,.2f}",
                   f"${comps['EV/EBITDA']['mid']:,.2f}", f"${comps['EV/Revenue']['mid']:,.2f}",
                   f"{avg_g + need_dg:.1%}" if need_dg is not None else "out of range",
@@ -221,9 +221,9 @@ with tabs[1]:
     st.subheader("What moves value the most")
     tf = go.Figure()
     tf.add_bar(y=tor["Driver"], x=tor["Downside"] - tor["Base"], base=tor["Base"], orientation="h", name="Driver gets worse",
-               marker_color=RED, hovertemplate="%{y}<br>Value $%{x:,.2f}<extra></extra>")
+               marker_color=RED, customdata=tor["Downside"], hovertemplate="%{y}<br>Value $%{customdata:,.2f}<extra></extra>")
     tf.add_bar(y=tor["Driver"], x=tor["Upside"] - tor["Base"], base=tor["Base"], orientation="h", name="Driver gets better",
-               marker_color=GREEN, hovertemplate="%{y}<br>Value $%{x:,.2f}<extra></extra>")
+               marker_color=GREEN, customdata=tor["Upside"], hovertemplate="%{y}<br>Value $%{customdata:,.2f}<extra></extra>")
     tf.add_vline(x=price, line_color="#111", line_width=2, line_dash="dot", annotation_text=f"Price ${price:,.2f}")
     tf.update_layout(barmode="overlay", height=380, margin=dict(t=30, b=10), xaxis_title="Blended DCF value per share ($)",
                      legend=dict(orientation="h", y=-0.2))
@@ -271,8 +271,10 @@ with tabs[2]:
                                    "$M": [g_dcf["pv_fcf"], g_dcf["pv_tv"], g_dcf["ev"], -a.debt, a.cash, g_dcf["equity"],
                                           g_dcf["per_share"]]}).style.format({"$M": "{:,.2f}"}), hide_index=True, width=W)
     if np.isfinite(g_dcf["tv_share"]):
-        takeaway(f"<b>{g_dcf['tv_share']:.0%}</b> of enterprise value comes after year 5, and it implies <b>{g_dcf['implied_exit']:.1f}x</b> "
-                 f"EBITDA versus your {exit_mult:.1f}x exit multiple. A big gap between those two means one of the long run inputs needs a second look.")
+        implied = (f"it implies <b>{g_dcf['implied_exit']:.1f}x</b> EBITDA versus your {exit_mult:.1f}x exit multiple. A big gap "
+                   "between those two means one of the long run inputs needs a second look." if np.isfinite(g_dcf["implied_exit"])
+                   else "year 5 EBITDA is zero, so no exit multiple can be implied.")
+        takeaway(f"<b>{g_dcf['tv_share']:.0%}</b> of enterprise value comes after year 5, and {implied}")
     st.markdown("**Value per share by WACC (rows) and long run growth (columns)**")
     sens = sensitivity(a, [w["wacc"] + x for x in (-0.02, -0.01, 0, 0.01, 0.02)], [tg + x for x in (-0.01, -0.005, 0, 0.005, 0.01)])
     hm = px.imshow(sens.values, x=list(sens.columns), y=list(sens.index), text_auto=".2f", aspect="auto",
@@ -346,6 +348,7 @@ with tabs[4]:
             max_px = (max_m * ebitda_next - a.debt + a.cash) / a.shares
             gap = max_px / price - 1
             verdict = ("That is well above today's price, so takeover interest could support the stock." if gap > 0.15 else
+                       "That is above today's price, so buyout interest offers some support." if gap > 0.05 else
                        "That is close to today's price, so buyout interest offers only modest support." if gap > -0.05 else
                        "That is below today's price, so buyout interest does not support the stock.")
             takeaway(f"A buyer needing a {target:.0f}% return could pay up to <b>{max_m:.1f}x</b> next year EBITDA, about "
@@ -383,7 +386,7 @@ with tabs[5]:
         h.update_layout(height=370, margin=dict(t=30, b=10), yaxis_title="Simulations")
         st.plotly_chart(h, width=W, theme=None)
         takeaway(f"In <b>{prob_up:.0%}</b> of {len(sims):,} simulated futures the company is worth more than today's price. "
-                 f"In a bad case (5th percentile) value is <b>${p5:,.2f}</b>, {p5 / price - 1:+.0%} from here.")
+                 f"In a bad case (5th percentile) value is <b>${p5:,.2f}</b>, {abs(p5 / price - 1):.0%} {'below' if p5 < price else 'above'} today's price.")
 
 with tabs[6]:
     st.markdown((Path(__file__).parent / "HOW_IT_WORKS.md").read_text())
