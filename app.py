@@ -10,6 +10,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+import importlib
+import ui
+importlib.reload(ui)  # pick up ui.py changes on hot redeploy
 from ui import intro, note, GOLD, GREEN, GREY, NAVY, RED, setup, takeaway, wrap
 from valuation.model import (SAMPLE_PEERS, Assumptions, blended_dcf, comps_value, dcf, forecast, lbo,
                              max_entry_multiple, monte_carlo, recommendation, sensitivity, solve_shift,
