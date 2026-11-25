@@ -14,8 +14,11 @@ CSS = """
 html, body, [class*="css"] { color: #111111; }
 [data-testid="stCaptionContainer"], .stCaption, [data-testid="stCaptionContainer"] p {
     color: #2B2F36 !important; font-size: 0.95rem !important; }
-[data-testid="stMetricLabel"] p { color: #2B2F36 !important; font-size: 0.95rem !important; font-weight: 600; }
-[data-testid="stMetricValue"] { color: #111111 !important; }
+[data-testid="stMetricLabel"] p { color: #2B2F36 !important; font-size: 0.95rem !important; font-weight: 600;
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+[data-testid="stMetricLabel"] { overflow: visible !important; }
+[data-testid="stMetricValue"] { color: #111111 !important; font-size: 1.85rem !important; }
+[data-testid="stMetricValue"] div { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
 button[role="tab"] p { font-size: 1.05rem !important; font-weight: 600; }
 button[role="tab"][aria-selected="true"] p { color: #1F3A93 !important; }
 [data-testid="stSidebar"] label p { color: #111111 !important; font-weight: 500; }
