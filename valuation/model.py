@@ -77,12 +77,15 @@ def dcf(a: Assumptions, discount: float | None = None, tg: float | None = None, 
         tv = last["FCF"] * (1 + g) / (r - g)
     else:
         tv = last["EBITDA"] * a.exit_multiple
-    pv_tv = tv / (1 + r) ** years[-1]
+    # Gordon value is built from mid year cash flows, so it is discounted on the same mid year basis;
+    # an exit multiple is a price paid at the end of year N, so it is discounted a full N years.
+    pv_tv = tv / (1 + r) ** (years[-1] - 0.5) if method == "gordon" else tv / (1 + r) ** years[-1]
     ev = pv_fcf + pv_tv
     equity = ev - a.debt + a.cash
     per_share = equity / a.shares
     return dict(pv_fcf=pv_fcf, tv=tv, pv_tv=pv_tv, ev=ev, equity=equity, per_share=per_share,
-                tv_share=pv_tv / ev, implied_exit=tv / last["EBITDA"], wacc=r)
+                tv_share=pv_tv / ev if ev else float("nan"),
+                implied_exit=(pv_tv * (1 + r) ** years[-1]) / last["EBITDA"] if last["EBITDA"] else float("nan"), wacc=r)
 
 
 def sensitivity(a: Assumptions, waccs, growths) -> pd.DataFrame:
@@ -100,7 +103,11 @@ def comps_value(a: Assumptions, peers: pd.DataFrame) -> dict:
     f = forecast(a).iloc[0]
     out = {}
     for col, metric in (("EV/EBITDA", f["EBITDA"]), ("EV/Revenue", f["Revenue"])):
-        vals = peers[col].dropna()
+        vals = pd.to_numeric(peers[col], errors="coerce").dropna() if col in peers else pd.Series(dtype=float)
+        vals = vals[vals > 0]
+        if vals.empty:
+            out[col] = dict(low=np.nan, mid=np.nan, high=np.nan, multiple=np.nan)
+            continue
         lo, med, hi = np.percentile(vals, 25), np.median(vals), np.percentile(vals, 75)
         to_px = lambda m: (m * metric - a.debt + a.cash) / a.shares
         out[col] = dict(low=to_px(lo), mid=to_px(med), high=to_px(hi), multiple=med)
@@ -109,52 +116,98 @@ def comps_value(a: Assumptions, peers: pd.DataFrame) -> dict:
 
 def lbo(a: Assumptions, entry_multiple: float, leverage: float, rate: float, exit_multiple: float,
         sweep: float = 1.0) -> dict:
-    """Simple 5 year LBO: buy at entry multiple, sweep free cash flow to pay down debt, exit at multiple."""
+    """5 year LBO. Entry and leverage multiples apply to next year EBITDA (the same basis as comps).
+    Free cash flow after interest pays down debt; once debt is gone it builds cash. A cash shortfall
+    is funded by borrowing more (a revolver). Equity at exit = exit EV - debt + cash."""
     f = forecast(a)
-    ebitda0 = a.revenue0 * a.ebitda_margin[0]
+    ebitda0 = float(f.iloc[0]["EBITDA"])
     entry_ev = entry_multiple * ebitda0
     debt = leverage * ebitda0
     equity_in = entry_ev - debt
+    if ebitda0 <= 0:
+        raise ValueError("A buyout needs positive EBITDA")
     if equity_in <= 0:
         raise ValueError("Leverage too high for entry price")
-    sched = []
+    cash, sched = 0.0, []
     for _, r in f.iterrows():
         interest = debt * rate
         fcf_levered = r["FCF"] - interest * (1 - a.tax_rate)
-        paydown = max(0.0, min(debt, fcf_levered * sweep))
+        if fcf_levered >= 0:
+            paydown = min(debt, fcf_levered * sweep)
+            cash += fcf_levered - paydown
+        else:
+            paydown = fcf_levered  # negative: new borrowing to cover the shortfall
         debt -= paydown
-        sched.append(dict(Year=int(r["Year"]), EBITDA=r["EBITDA"], **{"Interest": interest, "Levered FCF": fcf_levered, "Debt paydown": paydown, "Ending debt": debt}))
+        sched.append(dict(Year=int(r["Year"]), EBITDA=r["EBITDA"], **{"Interest": interest, "Levered FCF": fcf_levered,
+                                                                    "Debt paydown": paydown, "Ending debt": debt, "Cash built": cash}))
     exit_ev = exit_multiple * f.iloc[-1]["EBITDA"]
-    equity_out = exit_ev - debt
+    equity_out = exit_ev - debt + cash
     moic = equity_out / equity_in
-    irr = moic ** (1 / len(f)) - 1
+    irr = moic ** (1 / len(f)) - 1 if moic > 0 else -1.0  # equity wiped out means a total loss
     return dict(entry_ev=entry_ev, equity_in=equity_in, exit_ev=exit_ev, equity_out=equity_out,
                 moic=moic, irr=irr, schedule=pd.DataFrame(sched))
 
 
+def blended_dcf_vec(a: Assumptions, dg, dm, w, g) -> np.ndarray:
+    """Vectorized blended DCF (average of long run growth and exit multiple methods) for arrays of
+    growth shifts, margin shifts, discount rates and long run growth rates. Matches dcf() exactly."""
+    dg, dm, w, g = (np.asarray(x, dtype=float)[:, None] for x in (dg, dm, w, g))
+    growth = np.asarray(a.growth)[None, :] + dg
+    margin = np.clip(np.asarray(a.ebitda_margin)[None, :] + dm, 0.0, 0.95)
+    rev = a.revenue0 * np.cumprod(1 + growth, axis=1)
+    prev = np.concatenate([np.full((rev.shape[0], 1), a.revenue0), rev[:, :-1]], axis=1)
+    ebitda = rev * margin
+    da = rev * a.da_pct
+    fcf = (ebitda - da) * (1 - a.tax_rate) + da - rev * a.capex_pct - a.nwc_pct * (rev - prev)
+    years = np.arange(1, rev.shape[1] + 1)[None, :]
+    pv_fcf = (fcf / (1 + w) ** (years - 0.5)).sum(axis=1)
+    N = years[0, -1]
+    w1, g1 = w[:, 0], g[:, 0]
+    tv_g = fcf[:, -1] * (1 + g1) / (w1 - g1)
+    tv_x = ebitda[:, -1] * a.exit_multiple
+    ps = lambda pv_tv: (pv_fcf + pv_tv - a.debt + a.cash) / a.shares
+    return (ps(tv_g / (1 + w1) ** (N - 0.5)) + ps(tv_x / (1 + w1) ** N)) / 2
+
+
 def monte_carlo(a: Assumptions, n: int = 5000, growth_sd: float = 0.03, margin_sd: float = 0.02,
                 wacc_sd: float = 0.01, tg_sd: float = 0.005, seed: int = 11) -> np.ndarray:
-    """Distribution of DCF value per share when the key drivers are uncertain."""
+    """Distribution of blended DCF value per share when growth, margin, WACC and long run growth are
+    uncertain. Each draw keeps WACC at least 1 point above long run growth."""
     rng = np.random.default_rng(seed)
     base_w = wacc(a)["wacc"]
-    out = np.empty(n)
-    for i in range(n):
-        dg, dm = rng.normal(0, growth_sd), rng.normal(0, margin_sd)
-        w = max(0.04, rng.normal(base_w, wacc_sd))
-        g = min(w - 0.01, rng.normal(a.terminal_growth, tg_sd))
-        trial = replace(a, growth=tuple(x + dg for x in a.growth),
-                        ebitda_margin=tuple(max(0.01, x + dm) for x in a.ebitda_margin))
-        out[i] = dcf(trial, discount=w, tg=g)["per_share"]
-    return out
+    dg, dm = rng.normal(0, growth_sd, n), rng.normal(0, margin_sd, n)
+    w = np.maximum(0.02, rng.normal(base_w, wacc_sd, n))
+    g = np.minimum(w - 0.01, rng.normal(a.terminal_growth, tg_sd, n))
+    return blended_dcf_vec(a, dg, dm, w, g)
+
+
+def max_entry_multiple(a: Assumptions, leverage: float, rate: float, exit_multiple: float,
+                       target_irr: float) -> float:
+    """Highest entry EV/EBITDA that still earns the target IRR, by bisection. NaN if no price works."""
+    lo, hi = leverage + 0.01, 40.0
+    try:
+        if lbo(a, lo, leverage, rate, exit_multiple)["irr"] < target_irr:
+            return float("nan")
+    except ValueError:
+        return float("nan")
+    for _ in range(50):
+        mid = (lo + hi) / 2
+        try:
+            ok = lbo(a, mid, leverage, rate, exit_multiple)["irr"] >= target_irr
+        except ValueError:
+            ok = False
+        lo, hi = (mid, hi) if ok else (lo, mid)
+    return lo
 
 
 def recommendation(value: float, price: float, prob_up: float) -> tuple[str, str]:
     upside = value / price - 1
     if upside >= 0.15 and prob_up >= 0.6:
-        return "BUY", f"{upside:+.0%} upside to blended value, {prob_up:.0%} of simulations above today's price"
+        return "BUY", f"{upside:.0%} upside to blended value, {prob_up:.0%} of simulations above today's price"
     if upside <= -0.15 and prob_up <= 0.4:
-        return "SELL", f"{upside:+.0%} downside to blended value, only {prob_up:.0%} of simulations above price"
-    return "HOLD", f"{upside:+.0%} to blended value, {prob_up:.0%} of simulations above price"
+        return "SELL", f"{abs(upside):.0%} downside to blended value, only {prob_up:.0%} of simulations above price"
+    move = f"{upside:.0%} upside" if upside >= 0 else f"{abs(upside):.0%} downside"
+    return "HOLD", f"{move} to blended value, {prob_up:.0%} of simulations above price. Not enough edge for a BUY or SELL"
 
 
 SAMPLE_PEERS = pd.DataFrame({
@@ -162,3 +215,56 @@ SAMPLE_PEERS = pd.DataFrame({
     "EV/EBITDA": [10.5, 12.0, 9.2, 13.4, 11.1, 8.7],
     "EV/Revenue": [2.4, 3.1, 1.9, 3.6, 2.7, 1.8],
 })
+
+
+def _shift(a: Assumptions, dg: float = 0.0, dm: float = 0.0) -> Assumptions:
+    return replace(a, growth=tuple(x + dg for x in a.growth),
+                   ebitda_margin=tuple(min(0.95, max(0.0, x + dm)) for x in a.ebitda_margin))
+
+
+def blended_dcf(a: Assumptions, discount: float | None = None) -> float:
+    """Average of the Gordon growth and exit multiple DCF values per share."""
+    return (dcf(a, discount=discount)["per_share"] + dcf(a, discount=discount, method="exit")["per_share"]) / 2
+
+
+def solve_shift(a: Assumptions, target: float, driver: str = "growth", lo: float = -0.5, hi: float = 0.8) -> float | None:
+    """Reverse DCF: the uniform shift to every year's growth (or margin) that makes the blended
+    DCF value equal the target price. Returns None if no shift in range gets there."""
+    f = (lambda s: blended_dcf(_shift(a, dg=s)) - target) if driver == "growth" else \
+        (lambda s: blended_dcf(_shift(a, dm=s)) - target)
+    try:
+        flo, fhi = f(lo), f(hi)
+    except ValueError:
+        return None
+    if flo * fhi > 0:
+        return None
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        fm = f(mid)
+        if (fm > 0) == (fhi > 0):
+            hi, fhi = mid, fm
+        else:
+            lo, flo = mid, fm
+    return (lo + hi) / 2
+
+
+def tornado(a: Assumptions) -> pd.DataFrame:
+    """Blended DCF value when each driver moves down and up by a standard step. Sorted by swing."""
+    base_w = wacc(a)["wacc"]
+    base = blended_dcf(a)
+    tests = [
+        ("Revenue growth, every year (±2 pts)", lambda s: blended_dcf(_shift(a, dg=0.02 * s))),
+        ("EBITDA margin, every year (±2 pts)", lambda s: blended_dcf(_shift(a, dm=0.02 * s))),
+        ("WACC (±1 pt)", lambda s: blended_dcf(a, discount=base_w - 0.01 * s)),
+        ("Terminal growth (±0.5 pt)", lambda s: blended_dcf(replace(a, terminal_growth=a.terminal_growth + 0.005 * s))),
+        ("Exit multiple (±1.0x)", lambda s: blended_dcf(replace(a, exit_multiple=a.exit_multiple + 1.0 * s))),
+        ("Capex % of revenue (±1 pt)", lambda s: blended_dcf(replace(a, capex_pct=max(0.0, a.capex_pct - 0.01 * s)))),
+    ]
+    rows = []
+    for name, fn in tests:
+        try:
+            down, up = fn(-1), fn(1)
+        except ValueError:
+            continue
+        rows.append(dict(Driver=name, Downside=down, Upside=up, Swing=abs(up - down), Base=base))
+    return pd.DataFrame(rows).sort_values("Swing", ascending=True).reset_index(drop=True)
