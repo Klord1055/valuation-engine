@@ -16,7 +16,7 @@ html, body, [class*="css"] { color: #111111; }
     color: #2B2F36 !important; font-size: 0.95rem !important; }
 [data-testid="stMetricLabel"] p { color: #2B2F36 !important; font-size: 0.95rem !important; font-weight: 600;
     white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
-[data-testid="stMetricLabel"] { overflow: visible !important; }
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * { overflow: visible !important; white-space: normal !important; text-overflow: clip !important; max-width: none !important; }
 [data-testid="stMetricValue"] { color: #111111 !important; font-size: 1.85rem !important; }
 [data-testid="stMetricValue"] div { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
 button[role="tab"] p { font-size: 1.05rem !important; font-weight: 600; }
