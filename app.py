@@ -10,7 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from ui import intro, note, GOLD, GREEN, GREY, NAVY, RED, setup, takeaway
+from ui import intro, note, GOLD, GREEN, GREY, NAVY, RED, setup, takeaway, wrap
 from valuation.model import (SAMPLE_PEERS, Assumptions, blended_dcf, comps_value, dcf, forecast, lbo,
                              max_entry_multiple, monte_carlo, recommendation, sensitivity, solve_shift,
                              tornado, wacc)
@@ -167,11 +167,12 @@ with tabs[0]:
                                 marker=dict(color=GOLD, size=13, symbol="diamond", line=dict(color="#111", width=1)),
                                 hovertemplate=f"Midpoint ${r['Mid']:,.2f}<extra></extra>"))
     ff.add_vline(x=price, line_color=RED, line_width=3, annotation_text=f"Price ${price:,.2f}",
-                 annotation_font=dict(size=14, color=RED))
+                 annotation_position="top left", annotation_yshift=18, annotation_font=dict(size=14, color=RED))
     ff.add_vline(x=blended, line_color=GREEN, line_dash="dash", line_width=3, annotation_text=f"Blended ${blended:,.2f}",
                  annotation_position="bottom right", annotation_font=dict(size=14, color=GREEN))
-    ff.update_layout(title="Football field: value per share by method", height=400, margin=dict(t=50, b=10, l=10),
+    ff.update_layout(title="Football field: value per share by method", height=400, margin=dict(t=80, b=10, l=10),
                      xaxis_title="$ per share")
+    ff.update_yaxes(tickvals=list(methods["Method"]), ticktext=[wrap(m) for m in methods["Method"]])
     st.plotly_chart(ff, width=W, theme=None)
     above = int((methods["Mid"] > price).sum())
     n_comps = int(sum(np.isfinite(comps[k]["mid"]) for k in comps))
@@ -224,9 +225,11 @@ with tabs[1]:
                marker_color=RED, customdata=tor["Downside"], hovertemplate="%{y}<br>Value $%{customdata:,.2f}<extra></extra>")
     tf.add_bar(y=tor["Driver"], x=tor["Upside"] - tor["Base"], base=tor["Base"], orientation="h", name="Driver gets better",
                marker_color=GREEN, customdata=tor["Upside"], hovertemplate="%{y}<br>Value $%{customdata:,.2f}<extra></extra>")
-    tf.add_vline(x=price, line_color="#111", line_width=2, line_dash="dot", annotation_text=f"Price ${price:,.2f}")
-    tf.update_layout(barmode="overlay", height=380, margin=dict(t=30, b=10), xaxis_title="Blended DCF value per share ($)",
+    tf.add_vline(x=price, line_color="#111", line_width=2, line_dash="dot", annotation_text=f"Price ${price:,.2f}",
+                  annotation_position="top right", annotation_yshift=18)
+    tf.update_layout(barmode="overlay", height=380, margin=dict(t=55, b=10), xaxis_title="Blended DCF value per share ($)",
                      legend=dict(orientation="h", y=-0.2))
+    tf.update_yaxes(tickvals=list(tor["Driver"]), ticktext=[wrap(m) for m in tor["Driver"]])
     st.plotly_chart(tf, width=W, theme=None)
     top = tor.iloc[-1]
     crosses = tor[(tor["Downside"] < price) & (tor["Upside"] > price) | (tor["Downside"] > price) & (tor["Upside"] < price)]
@@ -381,9 +384,11 @@ with tabs[5]:
         k3.metric("Chance value beats price", f"{prob_up:.0%}")
         k4.metric("Bad case vs price (5th pct)", f"{p5 / price - 1:+.0%}")
         h = px.histogram(x=sims, nbins=70, color_discrete_sequence=[NAVY], labels={"x": "DCF value per share ($)"})
-        h.add_vline(x=price, line_color=RED, line_width=3, annotation_text=f"Price ${price:,.2f}", annotation_font=dict(color=RED, size=14))
-        h.add_vline(x=p50, line_color=GOLD, line_width=3, line_dash="dash", annotation_text="Median", annotation_position="top left")
-        h.update_layout(height=370, margin=dict(t=30, b=10), yaxis_title="Simulations")
+        h.add_vline(x=price, line_color=RED, line_width=3, annotation_text=f"Price ${price:,.2f}", annotation_font=dict(color=RED, size=14),
+                    annotation_position="top left", annotation_yshift=18)
+        h.add_vline(x=p50, line_color=GOLD, line_width=3, line_dash="dash", annotation_text="Median",
+                    annotation_position="top right", annotation_yshift=18)
+        h.update_layout(height=370, margin=dict(t=55, b=10), yaxis_title="Simulations")
         st.plotly_chart(h, width=W, theme=None)
         takeaway(f"In <b>{prob_up:.0%}</b> of {len(sims):,} simulated futures the company is worth more than today's price. "
                  f"In a bad case (5th percentile) value is <b>${p5:,.2f}</b>, {abs(p5 / price - 1):.0%} {'below' if p5 < price else 'above'} today's price.")
