@@ -1,6 +1,6 @@
 # Valuation & Deal Engine
 
-A Python and Streamlit app that values a company four ways (DCF with Gordon growth, DCF with an exit multiple, trading comps, and a leveraged buyout), stress tests the DCF with Monte Carlo simulation, and turns the result into a BUY, HOLD or SELL call with a football field chart.
+A Python and Streamlit app that values a company with the methods analysts already use (DCF with long run growth, DCF with an exit multiple, trading comps, and a leveraged buyout check), stress tests the DCF with Monte Carlo simulation, and turns the result into a BUY, HOLD or SELL call with a football field chart. It then works backwards: a reverse DCF shows what growth and margin today's share price already assumes, and a driver chart shows which single input could flip the call.
 
 **Live demo:** https://klord-valuation-engine.streamlit.app
 
@@ -12,7 +12,8 @@ My equity research work, including the DCF behind my Anterix BUY call, the Moody
 
 | Tab | Output |
 |---|---|
-| Summary | BUY, HOLD or SELL call, blended value vs price, football field across all methods |
+| Summary | BUY, HOLD or SELL call, blended value vs price, football field across all methods, one page CSV summary |
+| What the price assumes | Reverse DCF for growth and margin, driver tornado, and which one step change pushes value across the price |
 | DCF | 5 year forecast, free cash flow build, WACC build, enterprise to equity bridge, WACC by terminal growth sensitivity heatmap |
 | Comps | Editable peer table, implied value from EV/EBITDA and EV/Revenue |
 | LBO | Debt paydown schedule, IRR and MOIC, IRR grid by entry and exit multiple, max price at a target IRR |
